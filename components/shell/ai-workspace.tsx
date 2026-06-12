@@ -27,6 +27,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Card } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
+import { Markdown } from "@/components/ui/markdown";
 
 type CommandStep = {
   command: string;
@@ -82,22 +83,31 @@ const initialMessages: Message[] = [
   },
 ];
 
-const capturePlanReflection = (promptText: string, modelName: string, durationSec: string): MessageReflection => {
+const capturePlanReflection = (
+  promptText: string,
+  modelName: string,
+  durationSec: string,
+  metadata?: { agent: string; buildMode: string; platform: string; attachments: string[] }
+): MessageReflection => {
+  const agentText = metadata?.agent || "Agent Architecte";
+  const platformText = metadata?.platform || "Next.js · Vercel";
+  const filesCount = metadata?.attachments?.length || 0;
+
   return {
     duration: durationSec,
     steps: [
       {
-        title: `Initialisation du modèle ${modelName}`,
+        title: `Initialisation via ${modelName}`,
         status: "success",
-        description: `Chargement du modèle Ollama local pour traiter le prompt.`,
+        description: `Configuration de l'agent [${agentText}] ciblant la stack [${platformText}].`,
       },
       {
-        title: "Lecture des documents et de la structure du projet",
+        title: "Lecture des documents joints et contexte",
         status: "success",
-        description: `Analyse de la demande utilisateur : "${promptText.substring(0, 45)}..."`,
+        description: `Analyse avec ${filesCount} pièces jointes actives. Brief: "${promptText.substring(0, 40)}..."`,
       },
       {
-        title: "Audit du code actuel",
+        title: "Audit du code du workspace",
         status: "success",
         description: "Recherche des dépendances requises dans package.json et tsconfig.json.",
         codeBlock: {
@@ -116,7 +126,7 @@ const capturePlanReflection = (promptText: string, modelName: string, durationSe
       {
         title: "Génération de la réponse finale",
         status: "success",
-        description: `La réponse a été générée en streaming avec succès via ${modelName} en ${durationSec}.`,
+        description: `Réponse transmise en streaming avec succès en ${durationSec}.`,
       },
     ],
   };
@@ -138,8 +148,22 @@ export function AiWorkspace() {
   const [activeRightTab, setActiveRightTab] = React.useState<"project" | "activity">("project");
   const [selectedMessageIndex, setSelectedMessageIndex] = React.useState<number | null>(null);
 
-  async function handleSubmit(value: string) {
+  // Keep track of the last submitted composer metadata to reuse in regenerate/edit
+  const [lastMetadata, setLastMetadata] = React.useState({
+    agent: "Agent Architecte",
+    buildMode: "Deep Build",
+    platform: "Next.js · Vercel",
+    attachments: ["prompt-brief.md", "theme.json"],
+  });
+
+  async function handleSubmit(
+    value: string,
+    metadata?: { agent: string; buildMode: string; platform: string; attachments: string[] }
+  ) {
     if (isGenerating) return;
+
+    const finalMetadata = metadata || lastMetadata;
+    setLastMetadata(finalMetadata);
 
     // 1. Add user message
     const userMsg: Message = { role: "user", content: value };
@@ -161,6 +185,7 @@ export function AiWorkspace() {
         body: JSON.stringify({
           messages: updatedMessages,
           model: selectedModel,
+          ...finalMetadata, // send agent, buildMode, platform, attachments
         }),
       });
 
@@ -202,7 +227,7 @@ export function AiWorkspace() {
         if (next[assistantIndex]) {
           next[assistantIndex] = {
             ...next[assistantIndex],
-            reflection: capturePlanReflection(value, selectedModel, durationSec),
+            reflection: capturePlanReflection(value, selectedModel, durationSec, finalMetadata),
           };
         }
         return next;
@@ -252,6 +277,7 @@ export function AiWorkspace() {
           body: JSON.stringify({
             messages: nextMessages,
             model: selectedModel,
+            ...lastMetadata,
           }),
         });
 
@@ -283,7 +309,7 @@ export function AiWorkspace() {
           if (next[assistantIndex]) {
             next[assistantIndex] = {
               ...next[assistantIndex],
-              reflection: capturePlanReflection(newValue, selectedModel, durationSec),
+              reflection: capturePlanReflection(newValue, selectedModel, durationSec, lastMetadata),
             };
           }
           return next;
@@ -335,6 +361,7 @@ export function AiWorkspace() {
           body: JSON.stringify({
             messages: nextMessages,
             model: selectedModel,
+            ...lastMetadata,
           }),
         });
 
@@ -366,7 +393,7 @@ export function AiWorkspace() {
           if (next[assistantIndex]) {
             next[assistantIndex] = {
               ...next[assistantIndex],
-              reflection: capturePlanReflection(userPrompt, selectedModel, durationSec),
+              reflection: capturePlanReflection(userPrompt, selectedModel, durationSec, lastMetadata),
             };
           }
           return next;
@@ -551,11 +578,11 @@ function MessageBubble({ message }: { message: Message }) {
     <div className={cn("flex w-full", isUser ? "justify-end" : "justify-start")}>
       <div
         className={cn(
-          "max-w-[85%] rounded-[28px] border px-5 py-4 text-sm leading-6 soft-shadow whitespace-pre-wrap",
+          "max-w-[85%] rounded-[28px] border px-5 py-4 text-sm leading-6 soft-shadow",
           isUser ? "bg-foreground text-background" : "bg-card/80 text-foreground backdrop-blur",
         )}
       >
-        {message.content}
+        <Markdown content={message.content} />
       </div>
     </div>
   );
