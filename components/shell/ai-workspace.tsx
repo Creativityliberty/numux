@@ -15,6 +15,7 @@ import {
 } from "lucide-react";
 import { useTheme } from "next-themes";
 import { AppSidebar } from "@/components/shell/app-sidebar";
+import { ConversationMinimap } from "@/components/shell/conversation-minimap";
 import { RightContextPanel } from "@/components/shell/right-context-panel";
 import { PromptComposer } from "@/components/composer/prompt-composer";
 import { QuickActions } from "@/components/composer/quick-actions";
@@ -110,7 +111,9 @@ export function AiWorkspace() {
 
             <div className="mt-10 w-full max-w-3xl space-y-3 text-left">
               {messages.map((message, index) => (
-                <MessageBubble key={`${message.role}-${index}`} message={message} />
+                <div key={`${message.role}-${index}`} id={`msg-${index}`} className="scroll-mt-20">
+                  <MessageBubble message={message} />
+                </div>
               ))}
               {isGenerating && <GeneratingCard />}
             </div>
@@ -119,6 +122,8 @@ export function AiWorkspace() {
             <QuickActions className="mt-5" onPick={handleQuickAction} />
           </div>
         </div>
+
+        <ConversationMinimap messages={messages} />
       </section>
 
       <RightContextPanel open={rightPanelOpen} onToggle={() => setRightPanelOpen((value) => !value)} />
