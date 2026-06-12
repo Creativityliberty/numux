@@ -52,6 +52,14 @@ type Message = {
   reflection?: MessageReflection;
 };
 
+const AVAILABLE_MODELS = [
+  "gpt-oss:120b-cloud",
+  "gpt-oss:20b-cloud",
+  "deepseek-v3.1:671b-cloud",
+  "qwen3-coder:480b-cloud",
+  "gemma3:4b",
+];
+
 const initialMessages: Message[] = [
   {
     role: "assistant",
@@ -74,10 +82,15 @@ const initialMessages: Message[] = [
   },
 ];
 
-const capturePlanReflection = (promptText: string): MessageReflection => {
+const capturePlanReflection = (promptText: string, modelName: string, durationSec: string): MessageReflection => {
   return {
-    duration: "6.8s",
+    duration: durationSec,
     steps: [
+      {
+        title: `Initialisation du modèle ${modelName}`,
+        status: "success",
+        description: `Chargement du modèle Ollama local pour traiter le prompt.`,
+      },
       {
         title: "Lecture des documents et de la structure du projet",
         status: "success",
@@ -101,19 +114,9 @@ const capturePlanReflection = (promptText: string): MessageReflection => {
         },
       },
       {
-        title: "Inspecting current workspace status",
+        title: "Génération de la réponse finale",
         status: "success",
-        description: "Exécution d'un script d'analyse structurelle pour valider les composants existants.",
-        codeBlock: {
-          language: "python",
-          command: "import os; print({f: os.listdir(f'components/{f}') for f in os.listdir('components') if os.path.isdir(f'components/{f}')})",
-          output: "{'composer': ['prompt-composer.tsx', 'quick-actions.tsx'], 'shell': ['ai-workspace.tsx', 'app-sidebar.tsx', 'right-context-panel.tsx', 'sidebar-item.tsx']}",
-        },
-      },
-      {
-        title: "Génération de la proposition",
-        status: "success",
-        description: "Création de la structure du shell Next.js avec composants shadcn-like, sidebar rétractable, prompt composer premium et actions rapides.",
+        description: `La réponse a été générée en streaming avec succès via ${modelName} en ${durationSec}.`,
       },
     ],
   };
@@ -126,54 +129,181 @@ export function AiWorkspace() {
   const [messages, setMessages] = React.useState<Message[]>(initialMessages);
   const { theme, setTheme } = useTheme();
 
+  // Model selection states
+  const [selectedModel, setSelectedModel] = React.useState<string>("gpt-oss:120b-cloud");
+  const [modelDropdownOpen, setModelDropdownOpen] = React.useState(false);
+
   // New states for actions & context panel
   const [editingIndex, setEditingIndex] = React.useState<number | null>(null);
   const [activeRightTab, setActiveRightTab] = React.useState<"project" | "activity">("project");
   const [selectedMessageIndex, setSelectedMessageIndex] = React.useState<number | null>(null);
 
-  function handleSubmit(value: string) {
-    setMessages((current) => [...current, { role: "user", content: value }]);
+  async function handleSubmit(value: string) {
+    if (isGenerating) return;
+
+    // 1. Add user message
+    const userMsg: Message = { role: "user", content: value };
+    const updatedMessages = [...messages, userMsg];
+    setMessages(updatedMessages);
     setIsGenerating(true);
 
-    window.setTimeout(() => {
-      setMessages((current) => [
-        ...current,
-        {
-          role: "assistant",
-          content:
-            "Plan capté : je prépare une structure Next.js App Router avec composants shadcn-like, sidebar rétractable, composer premium, actions rapides, panneau contexte et base prête Vercel.",
-          reflection: capturePlanReflection(value),
-        },
-      ]);
+    // 2. Add empty assistant message to populate stream into
+    const assistantIndex = updatedMessages.length;
+    setMessages((current) => [
+      ...current,
+      { role: "assistant", content: "" }
+    ]);
+
+    try {
+      const response = await fetch("/api/chat", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          messages: updatedMessages,
+          model: selectedModel,
+        }),
+      });
+
+      if (!response.ok) {
+        throw new Error(await response.text());
+      }
+
+      if (!response.body) return;
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let streamedText = "";
+      const startTime = Date.now();
+
+      while (true) {
+        const { done, value: chunk } = await reader.read();
+        if (done) break;
+
+        streamedText += decoder.decode(chunk, { stream: true });
+        
+        // Update assistant message content in state in real-time
+        setMessages((current) => {
+          const next = [...current];
+          if (next[assistantIndex]) {
+            next[assistantIndex] = {
+              ...next[assistantIndex],
+              content: streamedText,
+            };
+          }
+          return next;
+        });
+      }
+
+      // Generation complete: calculate duration and set reflection logs
+      const durationMs = Date.now() - startTime;
+      const durationSec = (durationMs / 1000).toFixed(1) + "s";
+
+      setMessages((current) => {
+        const next = [...current];
+        if (next[assistantIndex]) {
+          next[assistantIndex] = {
+            ...next[assistantIndex],
+            reflection: capturePlanReflection(value, selectedModel, durationSec),
+          };
+        }
+        return next;
+      });
+
+    } catch (error: any) {
+      console.error("Chat generation failed:", error);
+      setMessages((current) => {
+        const next = [...current];
+        if (next[assistantIndex]) {
+          next[assistantIndex] = {
+            ...next[assistantIndex],
+            content: `Erreur de connexion à Ollama : ${error?.message || error}`,
+          };
+        }
+        return next;
+      });
+    } finally {
       setIsGenerating(false);
-    }, 900);
+    }
   }
 
   function handleQuickAction(label: string) {
     handleSubmit(`${label} pour un AI workspace premium, responsive, arrondi et prêt Vercel.`);
   }
 
-  function handleSaveEdit(index: number, newValue: string) {
+  async function handleSaveEdit(index: number, newValue: string) {
     if (messages[index].role === "user") {
-      // User edited: truncate conversation here and regenerate AI response
+      // User edited: truncate conversation here
       const newMessages = messages.slice(0, index);
       const updatedUserMsg: Message = { role: "user", content: newValue };
-      setMessages([...newMessages, updatedUserMsg]);
+      const nextMessages = [...newMessages, updatedUserMsg];
+      setMessages(nextMessages);
       setEditingIndex(null);
       setIsGenerating(true);
 
-      window.setTimeout(() => {
-        setMessages((current) => [
-          ...current,
-          {
-            role: "assistant",
-            content:
-              "Plan capté : je prépare une structure Next.js App Router avec composants shadcn-like, sidebar rétractable, composer premium, actions rapides, panneau contexte et base prête Vercel.",
-            reflection: capturePlanReflection(newValue),
-          },
-        ]);
+      const assistantIndex = nextMessages.length;
+      setMessages((current) => [
+        ...current,
+        { role: "assistant", content: "" }
+      ]);
+
+      try {
+        const response = await fetch("/api/chat", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            messages: nextMessages,
+            model: selectedModel,
+          }),
+        });
+
+        if (!response.ok) throw new Error(await response.text());
+        if (!response.body) return;
+
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder();
+        let streamedText = "";
+        const startTime = Date.now();
+
+        while (true) {
+          const { done, value: chunk } = await reader.read();
+          if (done) break;
+
+          streamedText += decoder.decode(chunk, { stream: true });
+          setMessages((current) => {
+            const next = [...current];
+            if (next[assistantIndex]) {
+              next[assistantIndex] = { ...next[assistantIndex], content: streamedText };
+            }
+            return next;
+          });
+        }
+
+        const durationSec = ((Date.now() - startTime) / 1000).toFixed(1) + "s";
+        setMessages((current) => {
+          const next = [...current];
+          if (next[assistantIndex]) {
+            next[assistantIndex] = {
+              ...next[assistantIndex],
+              reflection: capturePlanReflection(newValue, selectedModel, durationSec),
+            };
+          }
+          return next;
+        });
+
+      } catch (error: any) {
+        console.error("Chat generation failed:", error);
+        setMessages((current) => {
+          const next = [...current];
+          if (next[assistantIndex]) {
+            next[assistantIndex] = {
+              ...next[assistantIndex],
+              content: `Erreur de connexion à Ollama : ${error?.message || error}`,
+            };
+          }
+          return next;
+        });
+      } finally {
         setIsGenerating(false);
-      }, 900);
+      }
     } else {
       // AI edited: just update text locally
       setMessages((current) => {
@@ -185,24 +315,78 @@ export function AiWorkspace() {
     }
   }
 
-  function handleRegenerate(index: number) {
+  async function handleRegenerate(index: number) {
     if (index > 0 && messages[index].role === "assistant") {
       const userPrompt = messages[index - 1].content;
-      setMessages(messages.slice(0, index));
+      const nextMessages = messages.slice(0, index);
+      setMessages(nextMessages);
       setIsGenerating(true);
 
-      window.setTimeout(() => {
-        setMessages((current) => [
-          ...current,
-          {
-            role: "assistant",
-            content:
-              "Plan capté : je prépare une structure Next.js App Router avec composants shadcn-like, sidebar rétractable, composer premium, actions rapides, panneau contexte et base prête Vercel.",
-            reflection: capturePlanReflection(userPrompt),
-          },
-        ]);
+      const assistantIndex = nextMessages.length;
+      setMessages((current) => [
+        ...current,
+        { role: "assistant", content: "" }
+      ]);
+
+      try {
+        const response = await fetch("/api/chat", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            messages: nextMessages,
+            model: selectedModel,
+          }),
+        });
+
+        if (!response.ok) throw new Error(await response.text());
+        if (!response.body) return;
+
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder();
+        let streamedText = "";
+        const startTime = Date.now();
+
+        while (true) {
+          const { done, value: chunk } = await reader.read();
+          if (done) break;
+
+          streamedText += decoder.decode(chunk, { stream: true });
+          setMessages((current) => {
+            const next = [...current];
+            if (next[assistantIndex]) {
+              next[assistantIndex] = { ...next[assistantIndex], content: streamedText };
+            }
+            return next;
+          });
+        }
+
+        const durationSec = ((Date.now() - startTime) / 1000).toFixed(1) + "s";
+        setMessages((current) => {
+          const next = [...current];
+          if (next[assistantIndex]) {
+            next[assistantIndex] = {
+              ...next[assistantIndex],
+              reflection: capturePlanReflection(userPrompt, selectedModel, durationSec),
+            };
+          }
+          return next;
+        });
+
+      } catch (error: any) {
+        console.error("Chat generation failed:", error);
+        setMessages((current) => {
+          const next = [...current];
+          if (next[assistantIndex]) {
+            next[assistantIndex] = {
+              ...next[assistantIndex],
+              content: `Erreur de connexion à Ollama : ${error?.message || error}`,
+            };
+          }
+          return next;
+        });
+      } finally {
         setIsGenerating(false);
-      }, 900);
+      }
     }
   }
 
@@ -217,7 +401,7 @@ export function AiWorkspace() {
       <AppSidebar collapsed={sidebarCollapsed} onToggle={() => setSidebarCollapsed((value) => !value)} />
 
       <section className="relative flex h-screen min-w-0 flex-1 flex-col overflow-hidden">
-        <header className="flex h-16 shrink-0 items-center justify-between px-4 md:px-6">
+        <header className="flex h-16 shrink-0 items-center justify-between px-4 md:px-6 z-10">
           <div className="flex items-center gap-2">
             <Button variant="ghost" size="icon" className="md:hidden" aria-label="Menu mobile">
               <Menu className="h-5 w-5" />
@@ -229,10 +413,61 @@ export function AiWorkspace() {
           </div>
 
           <div className="flex items-center gap-2">
-            <button className="hidden h-9 items-center gap-2 rounded-full border bg-card/70 px-3 text-xs text-muted-foreground backdrop-blur transition hover:bg-muted md:inline-flex">
-              Flash Build
-              <ChevronDown className="h-3.5 w-3.5" />
-            </button>
+            {/* Model Selector Dropdown */}
+            <div className="relative">
+              <button 
+                onClick={() => setModelDropdownOpen(!modelDropdownOpen)}
+                className="hidden h-9 items-center gap-2 rounded-full border bg-card/70 px-3 text-xs text-muted-foreground backdrop-blur transition hover:bg-muted md:inline-flex font-medium select-none cursor-pointer"
+              >
+                <Sparkles className="h-3.5 w-3.5 text-primary dark:text-primary-foreground/90" />
+                {selectedModel}
+                <ChevronDown className="h-3.5 w-3.5 animate-in fade-in" />
+              </button>
+              {modelDropdownOpen && (
+                <>
+                  <div className="fixed inset-0 z-40" onClick={() => setModelDropdownOpen(false)} />
+                  <div className="absolute right-0 mt-2 z-50 w-64 rounded-2xl border border-border/50 bg-card/95 p-1.5 shadow-2xl backdrop-blur-md animate-in fade-in slide-in-from-top-2 duration-150">
+                    <p className="px-2.5 py-1.5 text-[9px] font-bold uppercase tracking-wider text-muted-foreground border-b border-border/30 mb-1">
+                      Sélectionner un modèle
+                    </p>
+                    <div className="max-h-60 overflow-y-auto no-scrollbar space-y-0.5">
+                      {AVAILABLE_MODELS.map((model) => (
+                        <button
+                          key={model}
+                          onClick={() => {
+                            setSelectedModel(model);
+                            setModelDropdownOpen(false);
+                          }}
+                          className={cn(
+                            "w-full text-left rounded-xl px-2.5 py-2 text-xs transition-colors flex items-center justify-between font-medium",
+                            selectedModel === model
+                              ? "bg-muted text-foreground"
+                              : "text-muted-foreground/90 hover:bg-muted/50 hover:text-foreground"
+                          )}
+                        >
+                          <span>{model}</span>
+                          <svg
+                            className="h-3.5 w-3.5 opacity-60"
+                            fill="none"
+                            stroke="currentColor"
+                            viewBox="0 0 24 24"
+                            xmlns="http://www.w3.org/2000/svg"
+                          >
+                            <path
+                              strokeLinecap="round"
+                              strokeLinejoin="round"
+                              strokeWidth="2"
+                              d="M3 15a4 4 0 004 4h9a5 5 0 10-.1-9.999 5.002 5.002 0 10-9.78 2.096A4.001 4.001 0 003 15z"
+                            />
+                          </svg>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                </>
+              )}
+            </div>
+
             <Button
               variant="ghost"
               size="icon"
@@ -316,7 +551,7 @@ function MessageBubble({ message }: { message: Message }) {
     <div className={cn("flex w-full", isUser ? "justify-end" : "justify-start")}>
       <div
         className={cn(
-          "max-w-[85%] rounded-[28px] border px-5 py-4 text-sm leading-6 soft-shadow",
+          "max-w-[85%] rounded-[28px] border px-5 py-4 text-sm leading-6 soft-shadow whitespace-pre-wrap",
           isUser ? "bg-foreground text-background" : "bg-card/80 text-foreground backdrop-blur",
         )}
       >
@@ -511,29 +746,17 @@ function EditMessageBlock({ initialValue, onSave, onCancel, isUser }: EditMessag
 
 function GeneratingCard() {
   return (
-    <Card className="rounded-[28px] border bg-card/80 p-5 shadow-none backdrop-blur">
+    <Card className="rounded-[28px] border bg-card/80 p-5 shadow-none backdrop-blur animate-pulse">
       <div className="flex items-start gap-3">
         <div className="mt-0.5 flex h-8 w-8 items-center justify-center rounded-full bg-muted">
           <TerminalSquare className="h-4 w-4" />
         </div>
         <div className="flex-1">
           <div className="flex items-center justify-between gap-3">
-            <p className="text-sm font-medium">Génération du workspace...</p>
+            <p className="text-sm font-medium">Génération en cours...</p>
             <CircleStop className="h-4 w-4 text-muted-foreground" />
           </div>
-          <p className="mt-1 text-sm text-muted-foreground">Analyse du brief, structure des composants, préparation du shell.</p>
-          <div className="mt-4 grid gap-2 text-xs text-muted-foreground md:grid-cols-3">
-            {[
-              "App Router",
-              "shadcn-like UI",
-              "Vercel Ready",
-            ].map((item) => (
-              <div key={item} className="flex items-center gap-2 rounded-full bg-muted px-3 py-2">
-                <Check className="h-3.5 w-3.5 text-emerald-500" />
-                {item}
-              </div>
-            ))}
-          </div>
+          <p className="mt-1 text-sm text-muted-foreground">L'agent génère sa réponse via le modèle local...</p>
         </div>
       </div>
     </Card>
