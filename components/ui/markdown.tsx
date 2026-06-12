@@ -16,7 +16,7 @@ export function Markdown({ content, className }: MarkdownProps) {
   const parts = content.split(/(```[\s\S]*?```)/g);
 
   return (
-    <div className={cn("space-y-2.5 font-normal text-sm leading-relaxed break-words text-foreground/95", className)}>
+    <div className={cn("space-y-2.5 font-normal text-sm leading-relaxed break-words text-inherit", className)}>
       {parts.map((part, index) => {
         if (part.startsWith("```") && part.endsWith("```")) {
           // It's a code block
@@ -42,7 +42,7 @@ export function Markdown({ content, className }: MarkdownProps) {
               // Heading 1
               if (line.startsWith("# ")) {
                 return (
-                  <h1 key={lineIdx} className="text-xl font-bold tracking-tight text-foreground mt-4 mb-2">
+                  <h1 key={lineIdx} className="text-xl font-bold tracking-tight text-inherit mt-4 mb-2">
                     {parseInlineStyles(line.slice(2))}
                   </h1>
                 );
@@ -51,7 +51,7 @@ export function Markdown({ content, className }: MarkdownProps) {
               // Heading 2
               if (line.startsWith("## ")) {
                 return (
-                  <h2 key={lineIdx} className="text-base font-bold tracking-tight text-foreground mt-3.5 mb-2">
+                  <h2 key={lineIdx} className="text-base font-bold tracking-tight text-inherit mt-3.5 mb-2">
                     {parseInlineStyles(line.slice(3))}
                   </h2>
                 );
@@ -60,7 +60,7 @@ export function Markdown({ content, className }: MarkdownProps) {
               // Heading 3
               if (line.startsWith("### ")) {
                 return (
-                  <h3 key={lineIdx} className="text-sm font-bold tracking-tight text-foreground mt-3 mb-1.5">
+                  <h3 key={lineIdx} className="text-sm font-bold tracking-tight text-inherit mt-3 mb-1.5">
                     {parseInlineStyles(line.slice(4))}
                   </h3>
                 );
@@ -70,7 +70,7 @@ export function Markdown({ content, className }: MarkdownProps) {
               if (line.startsWith("* ") || line.startsWith("- ")) {
                 return (
                   <ul key={lineIdx} className="list-disc pl-5 space-y-1 my-1">
-                    <li className="text-foreground/90 leading-relaxed">
+                    <li className="text-inherit leading-relaxed">
                       {parseInlineStyles(line.slice(2))}
                     </li>
                   </ul>
@@ -84,7 +84,7 @@ export function Markdown({ content, className }: MarkdownProps) {
                 const rest = match ? match[2] : line;
                 return (
                   <ol key={lineIdx} className="list-decimal pl-5 space-y-1 my-1" start={parseInt(num, 10)}>
-                    <li className="text-foreground/90 leading-relaxed">
+                    <li className="text-inherit leading-relaxed">
                       {parseInlineStyles(rest)}
                     </li>
                   </ol>
@@ -107,7 +107,7 @@ export function Markdown({ content, className }: MarkdownProps) {
 
               // Regular paragraph line
               return (
-                <p key={lineIdx} className="leading-relaxed">
+                <p key={lineIdx} className="leading-relaxed text-inherit">
                   {parseInlineStyles(line)}
                 </p>
               );
@@ -165,7 +165,7 @@ function parseInlineStyles(text: string): React.ReactNode[] {
     // Bold
     if (part.startsWith("**") && part.endsWith("**")) {
       return (
-        <strong key={index} className="font-semibold text-foreground">
+        <strong key={index} className="font-semibold text-inherit">
           {part.slice(2, -2)}
         </strong>
       );
@@ -173,7 +173,7 @@ function parseInlineStyles(text: string): React.ReactNode[] {
     // Italic 1 (*text*)
     if (part.startsWith("*") && part.endsWith("*")) {
       return (
-        <em key={index} className="italic text-foreground/90">
+        <em key={index} className="italic text-inherit opacity-95">
           {part.slice(1, -1)}
         </em>
       );
@@ -181,7 +181,7 @@ function parseInlineStyles(text: string): React.ReactNode[] {
     // Italic 2 (_text_)
     if (part.startsWith("_") && part.endsWith("_")) {
       return (
-        <em key={index} className="italic text-foreground/90">
+        <em key={index} className="italic text-inherit opacity-95">
           {part.slice(1, -1)}
         </em>
       );
@@ -189,7 +189,7 @@ function parseInlineStyles(text: string): React.ReactNode[] {
     // Inline code (`code`)
     if (part.startsWith("`") && part.endsWith("`")) {
       return (
-        <code key={index} className="font-mono bg-muted/70 px-1 py-0.5 rounded text-[11px] text-primary dark:text-primary-foreground font-medium">
+        <code key={index} className="font-mono bg-muted/40 px-1 py-0.5 rounded text-[11px] text-inherit font-medium border border-border/20">
           {part.slice(1, -1)}
         </code>
       );
